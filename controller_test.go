@@ -23,6 +23,7 @@ import (
 	"time"
 
 	apps "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -51,6 +52,7 @@ type fixture struct {
 	// Objects to put in the store.
 	fooLister        []*samplecontroller.Foo
 	deploymentLister []*apps.Deployment
+	serviceLister    []*corev1.Service
 	// Actions expected to happen on the client.
 	kubeactions []core.Action
 	actions     []core.Action
@@ -77,6 +79,7 @@ func newFoo(name string, replicas *int32) *samplecontroller.Foo {
 		Spec: samplecontroller.FooSpec{
 			DeploymentName: fmt.Sprintf("%s-deployment", name),
 			Replicas:       replicas,
+			ServiceName:    fmt.Sprintf("%s-service", name),
 		},
 	}
 }
@@ -89,10 +92,11 @@ func (f *fixture) newController() (*Controller, informers.SharedInformerFactory,
 	k8sI := kubeinformers.NewSharedInformerFactory(f.kubeclient, noResyncPeriodFunc())
 
 	c := NewController(f.kubeclient, f.client,
-		k8sI.Apps().V1().Deployments(), i.Samplecontroller().V1alpha1().Foos())
+		k8sI.Apps().V1().Deployments(), k8sI.Core().V1().Services(), i.Samplecontroller().V1alpha1().Foos())
 
 	c.foosSynced = alwaysReady
 	c.deploymentsSynced = alwaysReady
+	c.servicesSynced = alwaysReady
 	c.recorder = &record.FakeRecorder{}
 
 	for _, f := range f.fooLister {
@@ -101,6 +105,10 @@ func (f *fixture) newController() (*Controller, informers.SharedInformerFactory,
 
 	for _, d := range f.deploymentLister {
 		k8sI.Apps().V1().Deployments().Informer().GetIndexer().Add(d)
+	}
+
+	for _, s := range f.serviceLister {
+		k8sI.Core().V1().Services().Informer().GetIndexer().Add(s)
 	}
 
 	return c, i, k8sI
@@ -215,7 +223,9 @@ func filterInformerActions(actions []core.Action) []core.Action {
 			(action.Matches("list", "foos") ||
 				action.Matches("watch", "foos") ||
 				action.Matches("list", "deployments") ||
-				action.Matches("watch", "deployments")) {
+				action.Matches("watch", "deployments") ||
+				action.Matches("list", "services") ||
+				action.Matches("watch", "services")) {
 			continue
 		}
 		ret = append(ret, action)
@@ -230,6 +240,14 @@ func (f *fixture) expectCreateDeploymentAction(d *apps.Deployment) {
 
 func (f *fixture) expectUpdateDeploymentAction(d *apps.Deployment) {
 	f.kubeactions = append(f.kubeactions, core.NewUpdateAction(schema.GroupVersionResource{Resource: "deployments"}, d.Namespace, d))
+}
+
+func (f *fixture) expectCreateServiceAction(s *corev1.Service) {
+	f.kubeactions = append(f.kubeactions, core.NewCreateAction(schema.GroupVersionResource{Resource: "services"}, s.Namespace, s))
+}
+
+func (f *fixture) expectUpdateServiceAction(s *corev1.Service) {
+	f.kubeactions = append(f.kubeactions, core.NewUpdateAction(schema.GroupVersionResource{Resource: "services"}, s.Namespace, s))
 }
 
 func (f *fixture) expectUpdateFooStatusAction(foo *samplecontroller.Foo) {
@@ -248,7 +266,7 @@ func getKey(foo *samplecontroller.Foo, t *testing.T) string {
 	return key
 }
 
-func TestCreatesDeployment(t *testing.T) {
+func TestCreatesFoo(t *testing.T) {
 	f := newFixture(t)
 	foo := newFoo("test", int32Ptr(1))
 
@@ -257,8 +275,12 @@ func TestCreatesDeployment(t *testing.T) {
 
 	expDeployment := newDeployment(foo)
 	f.expectCreateDeploymentAction(expDeployment)
-	f.expectUpdateFooStatusAction(foo)
+	// f.expectUpdateFooStatusAction(foo)
 
+	expService := newService(foo)
+	f.expectCreateServiceAction(expService)
+
+	f.expectUpdateFooStatusAction(foo)
 	f.run(getKey(foo, t))
 }
 
@@ -266,20 +288,26 @@ func TestDoNothing(t *testing.T) {
 	f := newFixture(t)
 	foo := newFoo("test", int32Ptr(1))
 	d := newDeployment(foo)
+	s := newService(foo)
 
 	f.fooLister = append(f.fooLister, foo)
 	f.objects = append(f.objects, foo)
+
 	f.deploymentLister = append(f.deploymentLister, d)
 	f.kubeobjects = append(f.kubeobjects, d)
+
+	f.serviceLister = append(f.serviceLister, s)
+	f.kubeobjects = append(f.kubeobjects, s)
 
 	f.expectUpdateFooStatusAction(foo)
 	f.run(getKey(foo, t))
 }
 
-func TestUpdateDeployment(t *testing.T) {
+func TestUpdateFoo(t *testing.T) {
 	f := newFixture(t)
 	foo := newFoo("test", int32Ptr(1))
 	d := newDeployment(foo)
+	s := newService(foo)
 
 	// Update replicas
 	foo.Spec.Replicas = int32Ptr(2)
@@ -287,8 +315,12 @@ func TestUpdateDeployment(t *testing.T) {
 
 	f.fooLister = append(f.fooLister, foo)
 	f.objects = append(f.objects, foo)
+
 	f.deploymentLister = append(f.deploymentLister, d)
 	f.kubeobjects = append(f.kubeobjects, d)
+
+	f.serviceLister = append(f.serviceLister, s)
+	f.kubeobjects = append(f.kubeobjects, s)
 
 	f.expectUpdateFooStatusAction(foo)
 	f.expectUpdateDeploymentAction(expDeployment)

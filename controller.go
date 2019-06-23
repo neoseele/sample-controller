@@ -24,13 +24,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	appsinformers "k8s.io/client-go/informers/apps/v1"
+	servicesinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	appslisters "k8s.io/client-go/listers/apps/v1"
+	serviceslisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
@@ -69,6 +72,8 @@ type Controller struct {
 
 	deploymentsLister appslisters.DeploymentLister
 	deploymentsSynced cache.InformerSynced
+	servicesLister    serviceslisters.ServiceLister
+	servicesSynced    cache.InformerSynced
 	foosLister        listers.FooLister
 	foosSynced        cache.InformerSynced
 
@@ -88,6 +93,7 @@ func NewController(
 	kubeclientset kubernetes.Interface,
 	sampleclientset clientset.Interface,
 	deploymentInformer appsinformers.DeploymentInformer,
+	serviceInformer servicesinformers.ServiceInformer,
 	fooInformer informers.FooInformer) *Controller {
 
 	// Create event broadcaster
@@ -105,6 +111,8 @@ func NewController(
 		sampleclientset:   sampleclientset,
 		deploymentsLister: deploymentInformer.Lister(),
 		deploymentsSynced: deploymentInformer.Informer().HasSynced,
+		servicesLister:    serviceInformer.Lister(),
+		servicesSynced:    serviceInformer.Informer().HasSynced,
 		foosLister:        fooInformer.Lister(),
 		foosSynced:        fooInformer.Informer().HasSynced,
 		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Foos"),
@@ -140,6 +148,21 @@ func NewController(
 		DeleteFunc: controller.handleObject,
 	})
 
+	serviceInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: controller.handleObject,
+		UpdateFunc: func(old, new interface{}) {
+			newSvc := new.(*corev1.Service)
+			oldSvc := old.(*corev1.Service)
+			if newSvc.ResourceVersion == oldSvc.ResourceVersion {
+				// Periodic resync will send update events for all known Deployments.
+				// Two different versions of the same Deployment will always have different RVs.
+				return
+			}
+			controller.handleObject(new)
+		},
+		DeleteFunc: controller.handleObject,
+	})
+
 	return controller
 }
 
@@ -156,7 +179,7 @@ func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
 
 	// Wait for the caches to be synced before starting workers
 	klog.Info("Waiting for informer caches to sync")
-	if ok := cache.WaitForCacheSync(stopCh, c.deploymentsSynced, c.foosSynced); !ok {
+	if ok := cache.WaitForCacheSync(stopCh, c.deploymentsSynced, c.servicesSynced, c.foosSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
@@ -299,6 +322,30 @@ func (c *Controller) syncHandler(key string) error {
 		deployment, err = c.kubeclientset.AppsV1().Deployments(foo.Namespace).Update(newDeployment(foo))
 	}
 
+	//** [service handler start]
+	serviceName := foo.Spec.ServiceName
+	if serviceName == "" {
+		utilruntime.HandleError(fmt.Errorf("%s: service name must be specified", key))
+		return nil
+	}
+
+	service, err := c.servicesLister.Services(foo.Namespace).Get(serviceName)
+	// If the resource doesn't exist, we'll create it
+	if errors.IsNotFound(err) {
+		service, err = c.kubeclientset.CoreV1().Services(foo.Namespace).Create(newService(foo))
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if !metav1.IsControlledBy(service, foo) {
+		msg := fmt.Sprintf(MessageResourceExists, service.Name)
+		c.recorder.Event(foo, corev1.EventTypeWarning, ErrResourceExists, msg)
+		return fmt.Errorf(msg)
+	}
+	//** [service handler end]
+
 	// If an error occurs during Update, we'll requeue the item so we can
 	// attempt processing again later. THis could have been caused by a
 	// temporary network failure, or any other transient reason.
@@ -389,7 +436,7 @@ func (c *Controller) handleObject(obj interface{}) {
 // the Foo resource that 'owns' it.
 func newDeployment(foo *samplev1alpha1.Foo) *appsv1.Deployment {
 	labels := map[string]string{
-		"app":        "nginx",
+		"app":        "gweb",
 		"controller": foo.Name,
 	}
 	return &appsv1.Deployment{
@@ -412,10 +459,44 @@ func newDeployment(foo *samplev1alpha1.Foo) *appsv1.Deployment {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "nginx",
-							Image: "nginx:latest",
+							Name:            "gweb",
+							Image:           "gcr.io/nmiu-play/go-web:latest",
+							ImagePullPolicy: corev1.PullAlways,
 						},
 					},
+				},
+			},
+		},
+	}
+}
+
+func newService(foo *samplev1alpha1.Foo) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      foo.Spec.ServiceName,
+			Namespace: foo.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(foo, samplev1alpha1.SchemeGroupVersion.WithKind("Foo")),
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app":        "gweb",
+				"controller": foo.Name,
+			},
+			Type: corev1.ServiceTypeClusterIP,
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       int32(8000),
+					TargetPort: intstr.FromInt(8000),
+				},
+				{
+					Name:       "https",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       int32(10443),
+					TargetPort: intstr.FromInt(10443),
 				},
 			},
 		},
