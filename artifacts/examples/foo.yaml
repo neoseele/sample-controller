@@ -1,15 +1,11 @@
 apiVersion: samplecontroller.k8s.io/v1alpha1
 kind: Foo
 metadata:
-  name: foo-prom
+  name: foo
 spec:
-  deploymentName: foo-prom
-  replicas: 1
+  projectName: nmiu-play
+  clusterName: cr-aua
+  location: us-central1-a
   sidecarTag: 0.8.0
   sidecarArgs:
-    - --stackdriver.project-id=nmiu-play
-    - --prometheus.wal-directory=/prometheus/wal
-    - --stackdriver.kubernetes.location=us-central1-a
-    - --stackdriver.kubernetes.cluster-name=cr-aua
-    - --log.level=debug
     - --include={__name__=~"processed_ops.*"} #metrics to be collected

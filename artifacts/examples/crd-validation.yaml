@@ -16,13 +16,18 @@ spec:
       properties:
         spec:
           required:
+          - projectName
+          - clusterName
+          - location
           - sidecarTag
           - sidecarArgs
           properties:
-            replicas:
-              type: integer
-              minimum: 1
-              maximum: 10
+            projectName:
+              type: string
+            clusterName:
+              type: string
+            location:
+              type: string
             sidecarTag:
               type: string
             sidecarArgs:

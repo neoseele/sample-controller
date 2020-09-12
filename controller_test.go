@@ -75,8 +75,9 @@ func newFoo(name string, replicas *int32) *samplecontroller.Foo {
 			Namespace: metav1.NamespaceDefault,
 		},
 		Spec: samplecontroller.FooSpec{
-			DeploymentName: fmt.Sprintf("%s-deployment", name),
-			Replicas:       replicas,
+			ProjectName: fmt.Sprintf("%s-project", name),
+			ClusterName: fmt.Sprintf("%s-cluster", name),
+			Location:    "us-central1-a",
 		},
 	}
 }
@@ -257,11 +258,12 @@ func getKey(foo *samplecontroller.Foo, t *testing.T) string {
 func TestCreatesDeployment(t *testing.T) {
 	f := newFixture(t)
 	foo := newFoo("test", int32Ptr(1))
+	bar := "bar"
 
 	f.fooLister = append(f.fooLister, foo)
 	f.objects = append(f.objects, foo)
 
-	expDeployment := newDeployment(foo)
+	expDeployment := newDeployment(foo, &bar)
 	f.expectCreateDeploymentAction(expDeployment)
 	f.expectUpdateFooStatusAction(foo)
 
@@ -271,7 +273,8 @@ func TestCreatesDeployment(t *testing.T) {
 func TestDoNothing(t *testing.T) {
 	f := newFixture(t)
 	foo := newFoo("test", int32Ptr(1))
-	d := newDeployment(foo)
+	bar := "bar"
+	d := newDeployment(foo, &bar)
 
 	f.fooLister = append(f.fooLister, foo)
 	f.objects = append(f.objects, foo)
@@ -285,11 +288,10 @@ func TestDoNothing(t *testing.T) {
 func TestUpdateDeployment(t *testing.T) {
 	f := newFixture(t)
 	foo := newFoo("test", int32Ptr(1))
-	d := newDeployment(foo)
+	bar := "bar"
+	d := newDeployment(foo, &bar)
 
-	// Update replicas
-	foo.Spec.Replicas = int32Ptr(2)
-	expDeployment := newDeployment(foo)
+	expDeployment := newDeployment(foo, &bar)
 
 	f.fooLister = append(f.fooLister, foo)
 	f.objects = append(f.objects, foo)
@@ -304,7 +306,8 @@ func TestUpdateDeployment(t *testing.T) {
 func TestNotControlledByUs(t *testing.T) {
 	f := newFixture(t)
 	foo := newFoo("test", int32Ptr(1))
-	d := newDeployment(foo)
+	bar := "bar"
+	d := newDeployment(foo, &bar)
 
 	d.ObjectMeta.OwnerReferences = []metav1.OwnerReference{}
 
@@ -315,5 +318,3 @@ func TestNotControlledByUs(t *testing.T) {
 
 	f.runExpectError(getKey(foo, t))
 }
-
-func int32Ptr(i int32) *int32 { return &i }

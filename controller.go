@@ -50,9 +50,10 @@ import (
 )
 
 const controllerAgentName = "sample-controller"
-const configmapName = "prometheus-server-conf"
-const clusterRoleName = "prometheus"
-const clusterRoleBindingName = "prometheus"
+
+// const configmapName = "prometheus-server-conf"
+// const clusterRoleName = "prometheus"
+// const clusterRoleBindingName = "prometheus"
 
 const (
 	// SuccessSynced is used as part of the Event 'reason' when a Foo is synced
@@ -281,47 +282,40 @@ func (c *Controller) syncHandler(key string) error {
 		return err
 	}
 
+	resourceName := foo.Name + "-prometheus"
+
 	// Create clusterrole
-	_, err = c.clusterRolesLister.Get(clusterRoleName)
+	_, err = c.clusterRolesLister.Get(resourceName)
 	if errors.IsNotFound(err) {
-		_, err = c.kubeclientset.RbacV1().ClusterRoles().Create(context.TODO(), newClusterRole(foo), metav1.CreateOptions{})
+		_, err = c.kubeclientset.RbacV1().ClusterRoles().Create(context.TODO(), newClusterRole(foo, &resourceName), metav1.CreateOptions{})
 	}
 	if err != nil {
 		return err
 	}
 
 	// Create clusterrolebinding
-	_, err = c.clusterRoleBindingsLister.Get(clusterRoleBindingName)
+	_, err = c.clusterRoleBindingsLister.Get(resourceName)
 	if errors.IsNotFound(err) {
-		_, err = c.kubeclientset.RbacV1().ClusterRoleBindings().Create(context.TODO(), newClusterRoleBinding(foo), metav1.CreateOptions{})
+		_, err = c.kubeclientset.RbacV1().ClusterRoleBindings().Create(context.TODO(), newClusterRoleBinding(foo, &resourceName), metav1.CreateOptions{})
 	}
 	if err != nil {
 		return err
 	}
 
 	// Create prometheus configmap
-	_, err = c.configmapsLister.ConfigMaps(foo.Namespace).Get(configmapName)
+	_, err = c.configmapsLister.ConfigMaps(foo.Namespace).Get(resourceName)
 	if errors.IsNotFound(err) {
-		_, err = c.kubeclientset.CoreV1().ConfigMaps(foo.Namespace).Create(context.TODO(), newConfigMap(foo), metav1.CreateOptions{})
+		_, err = c.kubeclientset.CoreV1().ConfigMaps(foo.Namespace).Create(context.TODO(), newConfigMap(foo, &resourceName), metav1.CreateOptions{})
 	}
 	if err != nil {
 		return err
 	}
 
-	deploymentName := foo.Spec.DeploymentName
-	if deploymentName == "" {
-		// We choose to absorb the error here as the worker would requeue the
-		// resource otherwise. Instead, the next time the resource is updated
-		// the resource will be queued again.
-		utilruntime.HandleError(fmt.Errorf("%s: deployment name must be specified", key))
-		return nil
-	}
-
 	// Get the deployment with the name specified in Foo.spec
-	deployment, err := c.deploymentsLister.Deployments(foo.Namespace).Get(deploymentName)
+	deployment, err := c.deploymentsLister.Deployments(foo.Namespace).Get(resourceName)
 	// If the resource doesn't exist, we'll create it
 	if errors.IsNotFound(err) {
-		deployment, err = c.kubeclientset.AppsV1().Deployments(foo.Namespace).Create(context.TODO(), newDeployment(foo), metav1.CreateOptions{})
+		deployment, err = c.kubeclientset.AppsV1().Deployments(foo.Namespace).Create(context.TODO(), newDeployment(foo, &resourceName), metav1.CreateOptions{})
 	}
 
 	// If an error occurs during Get/Create, we'll requeue the item so we can
@@ -337,14 +331,6 @@ func (c *Controller) syncHandler(key string) error {
 		msg := fmt.Sprintf(MessageResourceExists, deployment.Name)
 		c.recorder.Event(foo, corev1.EventTypeWarning, ErrResourceExists, msg)
 		return fmt.Errorf(msg)
-	}
-
-	// If this number of the replicas on the Foo resource is specified, and the
-	// number does not equal the current desired replicas on the Deployment, we
-	// should update the Deployment resource.
-	if foo.Spec.Replicas != nil && *foo.Spec.Replicas != *deployment.Spec.Replicas {
-		klog.V(4).Infof("Foo %s replicas: %d, deployment replicas: %d", name, *foo.Spec.Replicas, *deployment.Spec.Replicas)
-		deployment, err = c.kubeclientset.AppsV1().Deployments(foo.Namespace).Update(context.TODO(), newDeployment(foo), metav1.UpdateOptions{})
 	}
 
 	// If an error occurs during Update, we'll requeue the item so we can
@@ -432,10 +418,10 @@ func (c *Controller) handleObject(obj interface{}) {
 	}
 }
 
-func newClusterRole(foo *samplev1alpha1.Foo) *rbacv1.ClusterRole {
+func newClusterRole(foo *samplev1alpha1.Foo, resourceName *string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: clusterRoleName,
+			Name: *resourceName,
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(foo, samplev1alpha1.SchemeGroupVersion.WithKind("Foo")),
 			},
@@ -483,10 +469,33 @@ func newClusterRole(foo *samplev1alpha1.Foo) *rbacv1.ClusterRole {
 	}
 }
 
-func newConfigMap(foo *samplev1alpha1.Foo) *corev1.ConfigMap {
+func newClusterRoleBinding(foo *samplev1alpha1.Foo, resourceName *string) *rbacv1.ClusterRoleBinding {
+	return &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: *resourceName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(foo, samplev1alpha1.SchemeGroupVersion.WithKind("Foo")),
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     *resourceName,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "default",
+				Namespace: foo.Namespace,
+			},
+		},
+	}
+}
+
+func newConfigMap(foo *samplev1alpha1.Foo, resourceName *string) *corev1.ConfigMap {
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: configmapName,
+			Name: *resourceName,
 		},
 		Data: map[string]string{
 			"prometheus.yml": `
@@ -523,47 +532,34 @@ func newConfigMap(foo *samplev1alpha1.Foo) *corev1.ConfigMap {
 	}
 }
 
-func newClusterRoleBinding(foo *samplev1alpha1.Foo) *rbacv1.ClusterRoleBinding {
-	return &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: clusterRoleBindingName,
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(foo, samplev1alpha1.SchemeGroupVersion.WithKind("Foo")),
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "ClusterRole",
-			Name:     "prometheus",
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      "default",
-				Namespace: foo.Namespace,
-			},
-		},
-	}
-}
-
 // newDeployment creates a new Deployment for a Foo resource. It also sets
 // the appropriate OwnerReferences on the resource so handleObject can discover
 // the Foo resource that 'owns' it.
-func newDeployment(foo *samplev1alpha1.Foo) *appsv1.Deployment {
+func newDeployment(foo *samplev1alpha1.Foo, resourceName *string) *appsv1.Deployment {
 	labels := map[string]string{
 		"app":        "prometheus-server",
 		"controller": foo.Name,
 	}
+
+	sidecarArgs := []string{
+		fmt.Sprintf("--stackdriver.project-id=%s", foo.Spec.ProjectName),
+		fmt.Sprintf("--stackdriver.kubernetes.cluster-name=%s", foo.Spec.ClusterName),
+		fmt.Sprintf("--stackdriver.kubernetes.location=%s", foo.Spec.Location),
+		"--prometheus.wal-directory=/prometheus/wal",
+		"--log.level=debug",
+	}
+	sidecarArgs = append(sidecarArgs, foo.Spec.SidecarArgs...)
+
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      foo.Spec.DeploymentName,
+			Name:      *resourceName,
 			Namespace: foo.Namespace,
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(foo, samplev1alpha1.SchemeGroupVersion.WithKind("Foo")),
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: foo.Spec.Replicas,
+			Replicas: int32Ptr(1),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
 			},
@@ -599,7 +595,7 @@ func newDeployment(foo *samplev1alpha1.Foo) *appsv1.Deployment {
 						{
 							Name:  "sidecar",
 							Image: "gcr.io/stackdriver-prometheus/stackdriver-prometheus-sidecar:" + foo.Spec.SidecarTag,
-							Args:  foo.Spec.SidecarArgs,
+							Args:  sidecarArgs,
 							Ports: []corev1.ContainerPort{
 								{
 									ContainerPort: 9091,
@@ -619,9 +615,9 @@ func newDeployment(foo *samplev1alpha1.Foo) *appsv1.Deployment {
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: configmapName,
+										Name: *resourceName,
 									},
-									DefaultMode: func(i int32) *int32 { return &i }(420),
+									DefaultMode: int32Ptr(420),
 								},
 							},
 						},
