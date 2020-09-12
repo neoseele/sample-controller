@@ -23,15 +23,20 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	appsinformers "k8s.io/client-go/informers/apps/v1"
+	coreinformers "k8s.io/client-go/informers/core/v1"
+	rbacinformers "k8s.io/client-go/informers/rbac/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	appslisters "k8s.io/client-go/listers/apps/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	rbaclisters "k8s.io/client-go/listers/rbac/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
@@ -45,6 +50,9 @@ import (
 )
 
 const controllerAgentName = "sample-controller"
+const configmapName = "prometheus-server-conf"
+const clusterRoleName = "prometheus"
+const clusterRoleBindingName = "prometheus"
 
 const (
 	// SuccessSynced is used as part of the Event 'reason' when a Foo is synced
@@ -68,10 +76,16 @@ type Controller struct {
 	// sampleclientset is a clientset for our own API group
 	sampleclientset clientset.Interface
 
-	deploymentsLister appslisters.DeploymentLister
-	deploymentsSynced cache.InformerSynced
-	foosLister        listers.FooLister
-	foosSynced        cache.InformerSynced
+	clusterRolesLister        rbaclisters.ClusterRoleLister
+	clusterRolesSynced        cache.InformerSynced
+	clusterRoleBindingsLister rbaclisters.ClusterRoleBindingLister
+	clusterRoleBindingsSynced cache.InformerSynced
+	configmapsLister          corelisters.ConfigMapLister
+	configmapsSynced          cache.InformerSynced
+	deploymentsLister         appslisters.DeploymentLister
+	deploymentsSynced         cache.InformerSynced
+	foosLister                listers.FooLister
+	foosSynced                cache.InformerSynced
 
 	// workqueue is a rate limited work queue. This is used to queue work to be
 	// processed instead of performing it as soon as a change happens. This
@@ -88,6 +102,9 @@ type Controller struct {
 func NewController(
 	kubeclientset kubernetes.Interface,
 	sampleclientset clientset.Interface,
+	clusterRoleInformer rbacinformers.ClusterRoleInformer,
+	clusterRoleBindingInformer rbacinformers.ClusterRoleBindingInformer,
+	configmapInformer coreinformers.ConfigMapInformer,
 	deploymentInformer appsinformers.DeploymentInformer,
 	fooInformer informers.FooInformer) *Controller {
 
@@ -102,14 +119,17 @@ func NewController(
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
 
 	controller := &Controller{
-		kubeclientset:     kubeclientset,
-		sampleclientset:   sampleclientset,
-		deploymentsLister: deploymentInformer.Lister(),
-		deploymentsSynced: deploymentInformer.Informer().HasSynced,
-		foosLister:        fooInformer.Lister(),
-		foosSynced:        fooInformer.Informer().HasSynced,
-		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Foos"),
-		recorder:          recorder,
+		kubeclientset:             kubeclientset,
+		sampleclientset:           sampleclientset,
+		clusterRolesLister:        clusterRoleInformer.Lister(),
+		clusterRoleBindingsLister: clusterRoleBindingInformer.Lister(),
+		configmapsLister:          configmapInformer.Lister(),
+		deploymentsLister:         deploymentInformer.Lister(),
+		deploymentsSynced:         deploymentInformer.Informer().HasSynced,
+		foosLister:                fooInformer.Lister(),
+		foosSynced:                fooInformer.Informer().HasSynced,
+		workqueue:                 workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Foos"),
+		recorder:                  recorder,
 	}
 
 	klog.Info("Setting up event handlers")
@@ -261,6 +281,33 @@ func (c *Controller) syncHandler(key string) error {
 		return err
 	}
 
+	// Create clusterrole
+	_, err = c.clusterRolesLister.Get(clusterRoleName)
+	if errors.IsNotFound(err) {
+		_, err = c.kubeclientset.RbacV1().ClusterRoles().Create(context.TODO(), newClusterRole(foo), metav1.CreateOptions{})
+	}
+	if err != nil {
+		return err
+	}
+
+	// Create clusterrolebinding
+	_, err = c.clusterRoleBindingsLister.Get(clusterRoleBindingName)
+	if errors.IsNotFound(err) {
+		_, err = c.kubeclientset.RbacV1().ClusterRoleBindings().Create(context.TODO(), newClusterRoleBinding(foo), metav1.CreateOptions{})
+	}
+	if err != nil {
+		return err
+	}
+
+	// Create prometheus configmap
+	_, err = c.configmapsLister.ConfigMaps(foo.Namespace).Get(configmapName)
+	if errors.IsNotFound(err) {
+		_, err = c.kubeclientset.CoreV1().ConfigMaps(foo.Namespace).Create(context.TODO(), newConfigMap(foo), metav1.CreateOptions{})
+	}
+	if err != nil {
+		return err
+	}
+
 	deploymentName := foo.Spec.DeploymentName
 	if deploymentName == "" {
 		// We choose to absorb the error here as the worker would requeue the
@@ -385,12 +432,126 @@ func (c *Controller) handleObject(obj interface{}) {
 	}
 }
 
+func newClusterRole(foo *samplev1alpha1.Foo) *rbacv1.ClusterRole {
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: clusterRoleName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(foo, samplev1alpha1.SchemeGroupVersion.WithKind("Foo")),
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{
+					"",
+				},
+				Resources: []string{
+					"nodes",
+					"nodes/proxy",
+					"services",
+					"endpoints",
+					"pods",
+				},
+				Verbs: []string{
+					"get",
+					"list",
+					"watch",
+				},
+			},
+			{
+				APIGroups: []string{
+					"extentions",
+				},
+				Resources: []string{
+					"ingresses",
+				},
+				Verbs: []string{
+					"get",
+					"list",
+					"watch",
+				},
+			},
+			{
+				NonResourceURLs: []string{
+					"/metrics",
+				},
+				Verbs: []string{
+					"get",
+				},
+			},
+		},
+	}
+}
+
+func newConfigMap(foo *samplev1alpha1.Foo) *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: configmapName,
+		},
+		Data: map[string]string{
+			"prometheus.yml": `
+      scrape_configs:
+
+      - job_name: 'kubernetes-pods'
+
+        kubernetes_sd_configs:
+        - role: pod
+
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: kubernetes_pod_name
+      `,
+		},
+	}
+}
+
+func newClusterRoleBinding(foo *samplev1alpha1.Foo) *rbacv1.ClusterRoleBinding {
+	return &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: clusterRoleBindingName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(foo, samplev1alpha1.SchemeGroupVersion.WithKind("Foo")),
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     "prometheus",
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "default",
+				Namespace: foo.Namespace,
+			},
+		},
+	}
+}
+
 // newDeployment creates a new Deployment for a Foo resource. It also sets
 // the appropriate OwnerReferences on the resource so handleObject can discover
 // the Foo resource that 'owns' it.
 func newDeployment(foo *samplev1alpha1.Foo) *appsv1.Deployment {
 	labels := map[string]string{
-		"app":        "nginx",
+		"app":        "prometheus-server",
 		"controller": foo.Name,
 	}
 	return &appsv1.Deployment{
@@ -413,8 +574,59 @@ func newDeployment(foo *samplev1alpha1.Foo) *appsv1.Deployment {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "nginx",
-							Image: "nginx:latest",
+							Name:  "prometheus",
+							Image: "prom/prometheus:v2.6.1",
+							Args: []string{
+								"--config.file=/etc/prometheus/prometheus.yml",
+								"--storage.tsdb.path=/prometheus/",
+							},
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 9090,
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "prometheus-config-volume",
+									MountPath: "/etc/prometheus/",
+								},
+								{
+									Name:      "prometheus-storage-volume",
+									MountPath: "/prometheus/",
+								},
+							},
+						},
+						{
+							Name:  "sidecar",
+							Image: "gcr.io/stackdriver-prometheus/stackdriver-prometheus-sidecar:" + foo.Spec.SidecarTag,
+							Args:  foo.Spec.SidecarArgs,
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 9091,
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "prometheus-storage-volume",
+									MountPath: "/prometheus/",
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "prometheus-config-volume",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: configmapName,
+									},
+									DefaultMode: func(i int32) *int32 { return &i }(420),
+								},
+							},
+						},
+						{
+							Name: "prometheus-storage-volume", // default to emptyDir
 						},
 					},
 				},

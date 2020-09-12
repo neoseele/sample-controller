@@ -93,6 +93,11 @@ func (in *FooSpec) DeepCopyInto(out *FooSpec) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.SidecarArgs != nil {
+		in, out := &in.SidecarArgs, &out.SidecarArgs
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	return
 }
 

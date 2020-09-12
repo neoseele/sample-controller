@@ -7,14 +7,25 @@ spec:
   version: v1alpha1
   names:
     kind: Foo
+    listKind: FooList
     plural: foos
+    singular: foo
   scope: Namespaced
   validation:
     openAPIV3Schema:
       properties:
         spec:
+          required:
+          - sidecarTag
+          - sidecarArgs
           properties:
             replicas:
               type: integer
               minimum: 1
               maximum: 10
+            sidecarTag:
+              type: string
+            sidecarArgs:
+              type: array
+              items:
+                type: string

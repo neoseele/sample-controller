@@ -34,8 +34,13 @@ type Foo struct {
 
 // FooSpec is the spec for a Foo resource
 type FooSpec struct {
-	DeploymentName string `json:"deploymentName"`
-	Replicas       *int32 `json:"replicas"`
+	// ProjectName string `json:"projectName"`
+	// ClusterName string `json:"clusterName"`
+	// Location    string `json:"location"`
+	DeploymentName string   `json:"deploymentName"`
+	Replicas       *int32   `json:"replicas"`
+	SidecarTag     string   `json:"sidecarTag"`
+	SidecarArgs    []string `json:"sidecarArgs"`
 }
 
 // FooStatus is the status for a Foo resource
