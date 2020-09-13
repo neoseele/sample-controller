@@ -22,7 +22,6 @@ Changes should not be made to these files manually, and when creating your own
 controller based off of this implementation you should not copy these files and
 instead run the `update-codegen` script to generate your own.
 
-<<<<<<< HEAD
 ## Details
 
 The sample controller uses [client-go library](https://github.com/kubernetes/client-go/tree/master/tools/cache) extensively.
@@ -72,16 +71,12 @@ then you already have a copy of this demo in
 (valid for all Go versions).
 
 ## Purpose
-=======
-## How to run `update-codegen`
->>>>>>> foo_v1
 
 - clone the Repo
 
 > The script requires the code to be cloned into the `~/k8s.io` directory
 
 ```sh
-<<<<<<< HEAD
 # assumes you have a working kubeconfig, not required if operating in-cluster
 go build -o sample-controller .
 ./sample-controller -kubeconfig=$HOME/.kube/config
@@ -112,9 +107,6 @@ Each instance of your custom resource has an attached Spec, which should be defi
 In practice, this Spec is arbitrary key-value data that specifies the configuration/behavior of your Resource.
 
 For example, if you were implementing a custom resource for a Database, you might provide a DatabaseSpec like the following:
-=======
-mkdir ~/k8s.io
->>>>>>> foo_v1
 
 git clone git@github.com:neoseele/sample-controller.git
 
@@ -129,7 +121,6 @@ go mod vendor
 chmod +x ./vendor/k8s.io/code-generator/generate-groups.sh
 ```
 
-<<<<<<< HEAD
 ### Example
 
 The CRD in [`crd-status-subresource.yaml`](./artifacts/examples/crd-status-subresource.yaml) enables the `/status` subresource
@@ -139,9 +130,6 @@ This means that [`UpdateStatus`](./controller.go#L330) can be used by the contro
 To understand why only the status part of the custom resource should be updated, please refer to the [Kubernetes API conventions](https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status).
 
 In the above steps, use `crd-status-subresource.yaml` to create the CRD:
-=======
-- run `update-codegen` after making code changes
->>>>>>> foo_v1
 
 ```sh
 ./hack/update-codegen.sh

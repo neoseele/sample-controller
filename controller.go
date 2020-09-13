@@ -333,7 +333,7 @@ func (c *Controller) syncHandler(key string) error {
 	service, err := c.servicesLister.Services(foo.Namespace).Get(serviceName)
 	// If the resource doesn't exist, we'll create it
 	if errors.IsNotFound(err) {
-		service, err = c.kubeclientset.CoreV1().Services(foo.Namespace).Create(newService(foo))
+		service, err = c.kubeclientset.CoreV1().Services(foo.Namespace).Create(context.TODO(), newService(foo), metav1.CreateOptions{})
 	}
 
 	if err != nil {
