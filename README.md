@@ -3,8 +3,6 @@
 This repository implements a simple controller for watching Foo resources as
 defined with a CustomResourceDefinition (CRD).
 
-**Note:** go-get or vendor this package as `k8s.io/sample-controller`.
-
 This particular example demonstrates how to perform basic operations such as:
 
 * How to register a new custom resource (custom resource type) of type `Foo` using a CustomResourceDefinition.
@@ -15,8 +13,7 @@ It makes use of the generators in [k8s.io/code-generator](https://github.com/kub
 to generate a typed client, informers, listers and deep-copy functions. You can
 do this yourself using the `./hack/update-codegen.sh` script.
 
-The `update-codegen` script will automatically generate the following files &
-directories:
+The `update-codegen` script generate the following files & directories:
 
 * `pkg/apis/samplecontroller/v1alpha1/zz_generated.deepcopy.go`
 * `pkg/generated/`
@@ -25,6 +22,7 @@ Changes should not be made to these files manually, and when creating your own
 controller based off of this implementation you should not copy these files and
 instead run the `update-codegen` script to generate your own.
 
+<<<<<<< HEAD
 ## Details
 
 The sample controller uses [client-go library](https://github.com/kubernetes/client-go/tree/master/tools/cache) extensively.
@@ -74,14 +72,16 @@ then you already have a copy of this demo in
 (valid for all Go versions).
 
 ## Purpose
+=======
+## How to run `update-codegen`
+>>>>>>> foo_v1
 
-This is an example of how to build a kube-like controller with a single type.
+- clone the Repo
 
-## Running
-
-**Prerequisite**: Since the sample-controller uses `apps/v1` deployments, the Kubernetes cluster version should be greater than 1.9.
+> The script requires the code to be cloned into the `~/k8s.io` directory
 
 ```sh
+<<<<<<< HEAD
 # assumes you have a working kubeconfig, not required if operating in-cluster
 go build -o sample-controller .
 ./sample-controller -kubeconfig=$HOME/.kube/config
@@ -112,47 +112,24 @@ Each instance of your custom resource has an attached Spec, which should be defi
 In practice, this Spec is arbitrary key-value data that specifies the configuration/behavior of your Resource.
 
 For example, if you were implementing a custom resource for a Database, you might provide a DatabaseSpec like the following:
+=======
+mkdir ~/k8s.io
+>>>>>>> foo_v1
 
-``` go
-type DatabaseSpec struct {
-	Databases []string `json:"databases"`
-	Users     []User   `json:"users"`
-	Version   string   `json:"version"`
-}
+git clone git@github.com:neoseele/sample-controller.git
 
-type User struct {
-	Name     string `json:"name"`
-	Password string `json:"password"`
-}
+cd ~/k8s.io/sample-controller
 ```
 
-## Validation
 
-To validate custom resources, use the [`CustomResourceValidation`](https://kubernetes.io/docs/tasks/access-kubernetes-api/extend-api-custom-resource-definitions/#validation) feature.
-
-This feature is beta and enabled by default in v1.9.
-
-### Example
-
-The schema in [`crd-validation.yaml`](./artifacts/examples/crd-validation.yaml) applies the following validation on the custom resource:
-`spec.replicas` must be an integer and must have a minimum value of 1 and a maximum value of 10.
-
-In the above steps, use `crd-validation.yaml` to create the CRD:
+- create and populate vendor dir
 
 ```sh
-# create a CustomResourceDefinition supporting validation
-kubectl create -f artifacts/examples/crd-validation.yaml
+go mod vendor
+chmod +x ./vendor/k8s.io/code-generator/generate-groups.sh
 ```
 
-## Subresources
-
-Custom Resources support `/status` and `/scale` subresources as a [beta feature](https://kubernetes.io/docs/tasks/access-kubernetes-api/custom-resources/custom-resource-definitions/#subresources) in v1.11 and is enabled by default.
-This feature is [alpha](https://v1-10.docs.kubernetes.io/docs/tasks/access-kubernetes-api/extend-api-custom-resource-definitions/#subresources) in v1.10 and to enable it you need to set the `CustomResourceSubresources` feature gate on the [kube-apiserver](https://kubernetes.io/docs/admin/kube-apiserver):
-
-```sh
---feature-gates=CustomResourceSubresources=true
-```
-
+<<<<<<< HEAD
 ### Example
 
 The CRD in [`crd-status-subresource.yaml`](./artifacts/examples/crd-status-subresource.yaml) enables the `/status` subresource
@@ -162,26 +139,19 @@ This means that [`UpdateStatus`](./controller.go#L330) can be used by the contro
 To understand why only the status part of the custom resource should be updated, please refer to the [Kubernetes API conventions](https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status).
 
 In the above steps, use `crd-status-subresource.yaml` to create the CRD:
+=======
+- run `update-codegen` after making code changes
+>>>>>>> foo_v1
 
 ```sh
-# create a CustomResourceDefinition supporting the status subresource
-kubectl create -f artifacts/examples/crd-status-subresource.yaml
+./hack/update-codegen.sh
+Generating deepcopy funcs
+Generating clientset for samplecontroller:v1alpha1 at k8s.io/sample-controller/pkg/generated/clientset
+Generating listers for samplecontroller:v1alpha1 at k8s.io/sample-controller/pkg/generated/listers
+Generating informers for samplecontroller:v1alpha1 at k8s.io/sample-controller/pkg/generated/informers
 ```
 
-## Cleanup
-
-You can clean up the created CustomResourceDefinition with:
-
-    kubectl delete crd foos.samplecontroller.k8s.io
-
-## Compatibility
-
-HEAD of this repository will match HEAD of k8s.io/apimachinery and
-k8s.io/client-go.
 
 ## Where does it come from?
 
-`sample-controller` is synced from
-https://github.com/kubernetes/kubernetes/blob/master/staging/src/k8s.io/sample-controller.
-Code changes are made in that location, merged into k8s.io/kubernetes and
-later synced here.
+https://github.com/kubernetes/sample-controller

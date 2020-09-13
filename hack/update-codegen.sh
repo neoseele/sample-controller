@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash -x
 
 # Copyright 2017 The Kubernetes Authors.
 #
